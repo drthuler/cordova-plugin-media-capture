@@ -23,6 +23,8 @@
 #import <Cordova/CDVPlugin.h>
 #import "CDVFile.h"
 
+@interface CDVCapture : CDVPlugin <AVCaptureFileOutputRecordingDelegate>
+
 enum CDVCaptureError {
     CAPTURE_INTERNAL_ERR = 0,
     CAPTURE_APPLICATION_BUSY = 1,
@@ -109,6 +111,9 @@ typedef NSUInteger CDVCaptureError;
 @property (nonatomic, strong) CDVPluginResult* pluginResult;
 @property (nonatomic, strong) NSTimer* timer;
 @property (nonatomic) BOOL isTimed;
+@property (nonatomic, strong) AVCaptureSession* captureSession;
+@property (nonatomic, strong) AVCaptureMovieFileOutput* movieOutput;
+@property (nonatomic, strong) NSString* callbackId;
 
 - (id)initWithCommand:(CDVPlugin*)theCommand duration:(NSNumber*)theDuration callbackId:(NSString*)theCallbackId;
 - (void)processButton:(id)sender;

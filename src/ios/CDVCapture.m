@@ -211,7 +211,7 @@
     return result;
 }
 
-- (void)captureVideo:(CDVInvokedUrlCommand*)command
+- (void)captureVideoOld:(CDVInvokedUrlCommand*)command
 {
     NSString* callbackId = command.callbackId;
     NSDictionary* options = [command argumentAtIndex:0];
@@ -287,6 +287,122 @@
         pickerController.modalPresentationStyle = UIModalPresentationCurrentContext;
         [self.viewController presentViewController:pickerController animated:YES completion:nil];
     }
+}
+
+- (void)captureVideo:(CDVInvokedUrlCommand*)command {
+    NSString* callbackId = command.callbackId;
+    NSDictionary* options = [command argumentAtIndex:0];
+
+    if ([options isKindOfClass:[NSNull class]]) {
+        options = [NSDictionary dictionary];
+    }
+
+    NSNumber* duration = [options objectForKey:@"duration"];
+    NSNumber* quality = [options objectForKey:@"quality"];
+
+    // Verifica permissões de acesso à câmera
+    if (![self hasCameraAccess]) {
+        [self showPermissionsAlert];
+        return;
+    }
+
+    // Configuração da sessão de captura
+    AVCaptureSession* captureSession = [[AVCaptureSession alloc] init];
+    captureSession.sessionPreset = AVCaptureSessionPresetHigh;
+
+    // Configuração do dispositivo de entrada (câmera)
+    AVCaptureDevice* videoDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    NSError* error = nil;
+    AVCaptureDeviceInput* videoInput = [AVCaptureDeviceInput deviceInputWithDevice:videoDevice error:&error];
+    if (error) {
+        NSLog(@"Erro ao configurar câmera: %@", error.localizedDescription);
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_INTERNAL_ERR];
+        [self.commandDelegate sendPluginResult:result callbackId:callbackId];
+        return;
+    }
+    [captureSession addInput:videoInput];
+
+    // Configuração da saída de vídeo
+    AVCaptureMovieFileOutput* movieOutput = [[AVCaptureMovieFileOutput alloc] init];
+    if (duration) {
+        CMTime maxDuration = CMTimeMake([duration intValue], 1);
+        movieOutput.maxRecordedDuration = maxDuration;
+    }
+    [captureSession addOutput:movieOutput];
+
+    // Caminho do arquivo de saída
+    NSString* outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"output.mov"];
+    NSURL* outputURL = [NSURL fileURLWithPath:outputPath];
+
+    // Inicia a gravação
+    [captureSession startRunning];
+    [movieOutput startRecordingToOutputFileURL:outputURL recordingDelegate:self];
+
+    // Salva referências necessárias
+    self.captureSession = captureSession;
+    self.movieOutput = movieOutput;
+    self.callbackId = callbackId;
+}
+
+// Delegate para quando a gravação for concluída
+- (void)fileOutput:(AVCaptureFileOutput*)output didFinishRecordingToOutputFileAtURL:(NSURL*)outputFileURL fromConnections:(NSArray*)connections error:(NSError*)error {
+    [self.captureSession stopRunning];
+    self.captureSession = nil;
+
+    CDVPluginResult* result;
+    if (error) {
+        NSLog(@"Erro durante gravação: %@", error.localizedDescription);
+        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_INTERNAL_ERR];
+    } else {
+        // Retorna informações do arquivo gravado no formato esperado
+        NSDictionary* fileDict = [self getMediaDictionaryFromPath:[outputFileURL path] ofType:@"video/quicktime"];
+        NSArray* fileArray = @[fileDict];
+        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:fileArray];
+    }
+
+    [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+}
+
+// Método para verificar permissões da câmera
+- (BOOL)hasCameraAccess {
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    return status == AVAuthorizationStatusAuthorized || status == AVAuthorizationStatusNotDetermined;
+}
+
+// Mostra alerta se o acesso for negado
+- (void)showPermissionsAlert {
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Permissões Necessárias"
+                                                                              message:@"Acesse as configurações e permita o uso da câmera para continuar."
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+
+    UIAlertAction *settingsAction = [UIAlertAction actionWithTitle:@"Configurações" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString] options:@{} completionHandler:nil];
+    }];
+    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancelar" style:UIAlertActionStyleCancel handler:nil];
+
+    [alertController addAction:settingsAction];
+    [alertController addAction:cancelAction];
+
+    [self.viewController presentViewController:alertController animated:YES completion:nil];
+}
+
+// Converte o caminho do arquivo em um dicionário de mídia
+- (NSDictionary*)getMediaDictionaryFromPath:(NSString*)fullPath ofType:(NSString*)type {
+    NSFileManager* fileMgr = [[NSFileManager alloc] init];
+    NSMutableDictionary* fileDict = [NSMutableDictionary dictionaryWithCapacity:6];
+
+    // Adiciona informações do arquivo
+    [fileDict setObject:[fullPath lastPathComponent] forKey:@"name"];
+    [fileDict setObject:fullPath forKey:@"fullPath"];
+    [fileDict setObject:(type ? type : @"video/quicktime") forKey:@"type"];
+
+    NSDictionary* fileAttrs = [fileMgr attributesOfItemAtPath:fullPath error:nil];
+    [fileDict setObject:[NSNumber numberWithUnsignedLongLong:[fileAttrs fileSize]] forKey:@"size"];
+    NSDate* modDate = [fileAttrs fileModificationDate];
+    NSNumber* msDate = [NSNumber numberWithDouble:[modDate timeIntervalSince1970] * 1000];
+    [fileDict setObject:msDate forKey:@"lastModifiedDate"];
+
+    return fileDict;
 }
 
 - (CDVPluginResult*)processVideo:(NSString*)moviePath forCallbackId:(NSString*)callbackId
