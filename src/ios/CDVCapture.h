@@ -23,8 +23,6 @@
 #import <Cordova/CDVPlugin.h>
 #import "CDVFile.h"
 
-@interface CDVCapture : CDVPlugin <AVCaptureFileOutputRecordingDelegate>
-
 enum CDVCaptureError {
     CAPTURE_INTERNAL_ERR = 0,
     CAPTURE_APPLICATION_BUSY = 1,
@@ -47,23 +45,11 @@ typedef NSUInteger CDVCaptureError;
 
 @end
 
-@interface CDVCapture : CDVPlugin <UIImagePickerControllerDelegate, UINavigationControllerDelegate>
-{
-    CDVImagePicker* pickerController;
-    BOOL inUse;
-}
-@property BOOL inUse;
-- (void)captureAudio:(CDVInvokedUrlCommand*)command;
-- (void)captureImage:(CDVInvokedUrlCommand*)command;
-- (CDVPluginResult*)processImage:(UIImage*)image type:(NSString*)mimeType forCallbackId:(NSString*)callbackId;
-- (void)captureVideo:(CDVInvokedUrlCommand*)command;
-- (CDVPluginResult*)processVideo:(NSString*)moviePath forCallbackId:(NSString*)callbackId;
-- (void)getMediaModes:(CDVInvokedUrlCommand*)command;
-- (void)getFormatData:(CDVInvokedUrlCommand*)command;
-- (NSDictionary*)getMediaDictionaryFromPath:(NSString*)fullPath ofType:(NSString*)type;
-- (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info;
-- (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingImage:(UIImage*)image editingInfo:(NSDictionary*)editingInfo;
-- (void)imagePickerControllerDidCancel:(UIImagePickerController*)picker;
+@interface CDVCapture : CDVPlugin <AVCaptureFileOutputRecordingDelegate>
+
+@property (nonatomic, strong) AVCaptureSession* captureSession;
+@property (nonatomic, strong) AVCaptureMovieFileOutput* movieOutput;
+@property (nonatomic, strong) NSString* callbackId;
 
 @end
 
@@ -111,9 +97,6 @@ typedef NSUInteger CDVCaptureError;
 @property (nonatomic, strong) CDVPluginResult* pluginResult;
 @property (nonatomic, strong) NSTimer* timer;
 @property (nonatomic) BOOL isTimed;
-@property (nonatomic, strong) AVCaptureSession* captureSession;
-@property (nonatomic, strong) AVCaptureMovieFileOutput* movieOutput;
-@property (nonatomic, strong) NSString* callbackId;
 
 - (id)initWithCommand:(CDVPlugin*)theCommand duration:(NSNumber*)theDuration callbackId:(NSString*)theCallbackId;
 - (void)processButton:(id)sender;
@@ -122,3 +105,4 @@ typedef NSUInteger CDVCaptureError;
 - (NSString*)formatTime:(int)interval;
 - (void)updateTime;
 @end
+
