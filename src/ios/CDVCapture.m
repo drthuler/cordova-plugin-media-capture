@@ -1,3 +1,4 @@
+
 /*
  Licensed to the Apache Software Foundation (ASF) under one
  or more contributor license agreements.  See the NOTICE file
@@ -28,6 +29,36 @@
 #define kW3CMediaFormatBitrate @"bitrate"
 #define kW3CMediaFormatDuration @"duration"
 #define kW3CMediaModeType @"type"
+
+@interface PortraitImagePickerController : UIImagePickerController
+@end
+
+@implementation PortraitImagePickerController
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskPortrait;
+}
+
+- (BOOL)shouldAutorotate {
+    return NO;
+}
+
+@end
+
+@interface PortraitAVPlayerViewControllerMC : AVPlayerViewController
+@end
+
+@implementation PortraitAVPlayerViewControllerMC
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskPortrait;
+}
+
+- (BOOL)shouldAutorotate {
+    return NO;
+}
+
+@end
 
 @implementation NSBundle (PluginExtensions)
 
@@ -82,6 +113,39 @@
     self.inUse = NO;
     self.recordingTime = 0;
     self.recordingTimer = nil;
+
+    [self forcePortraitOrientation];
+}
+
+- (void)forcePortraitOrientation {
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleDeviceOrientationChange)
+                                                 name:UIDeviceOrientationDidChangeNotification
+                                               object:nil];
+
+    [[UIDevice currentDevice] setValue:@(UIInterfaceOrientationPortrait) forKey:@"orientation"];
+    [UIViewController attemptRotationToDeviceOrientation];
+    //NSLog(@"[INFO] Modo Retrato travado.");
+
+}
+
+- (void)restoreDefaultOrientation {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
+    [[UIDevice currentDevice] setValue:@(UIInterfaceOrientationPortrait) forKey:@"orientation"];
+    [UIViewController attemptRotationToDeviceOrientation];
+    //NSLog(@"[INFO] Modo Retrato liberado.");
+}
+
+- (void)handleDeviceOrientationChange {
+    [[UIDevice currentDevice] setValue:@(UIInterfaceOrientationPortrait) forKey:@"orientation"];
+}
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskPortrait;
+}
+
+- (BOOL)shouldAutorotate {
+    return NO;
 }
 
 - (void)captureAudio:(CDVInvokedUrlCommand*)command
@@ -216,9 +280,17 @@
 - (void)captureVideo:(CDVInvokedUrlCommand*)command {
     self.callbackId = command.callbackId;
 
-    NSLog(@"[INFO] Iniciando captura de vídeo.");
+    //NSLog(@"[INFO] Iniciando captura de vídeo.");
 
-    UIImagePickerController* picker = [[UIImagePickerController alloc] init];
+    [self forcePortraitOrientation];
+
+    NSDictionary *options = [command.arguments firstObject];
+    NSNumber *duration = options[@"duration"];
+    NSString *quality = options[@"quality"];
+    self.maxRecordingDuration = duration ? [duration integerValue] : 0;
+
+    PortraitImagePickerController* picker = [[PortraitImagePickerController alloc] init];
+
     if (![UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
         NSLog(@"[ERROR] Câmera não disponível neste dispositivo.");
         CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Câmera não disponível"];
@@ -226,11 +298,33 @@
         return;
     }
 
+    [self addPersistentBlackBackground];
+
+    picker.modalPresentationStyle = UIModalPresentationFullScreen;
+    picker.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
     picker.delegate = self;
+    picker.allowsEditing = NO;
+
+    // Garantir orientação portrait
+    picker.view.autoresizingMask = UIViewAutoresizingNone;
+    picker.modalPresentationCapturesStatusBarAppearance = YES;
+    //[picker setValue:@(UIInterfaceOrientationPortrait) forKey:@"preferredInterfaceOrientationForPresentation"];
+
     picker.sourceType = UIImagePickerControllerSourceTypeCamera;
     picker.mediaTypes = @[(NSString *)kUTTypeMovie];
-    picker.videoQuality = UIImagePickerControllerQualityTypeHigh; // Força alta qualidade
-    picker.videoMaximumDuration = 120; // Limita a duração a 2 minutos
+    if (quality) {
+        if ([quality floatValue] == 0) {
+            picker.videoQuality = UIImagePickerControllerQualityTypeLow;
+        } else if ([quality floatValue] == 0.5) {
+            picker.videoQuality = UIImagePickerControllerQualityTypeMedium;
+        } else if ([quality floatValue] == 1) {
+            picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+        } else {
+            picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+        }
+    } else {
+        picker.videoQuality = UIImagePickerControllerQualityTypeHigh;
+    }
     picker.cameraCaptureMode = UIImagePickerControllerCameraCaptureModeVideo;
     picker.showsCameraControls = NO;
     picker.cameraOverlayView = [self createCustomOverlay];
@@ -246,21 +340,53 @@
                                                  name:UIApplicationWillEnterForegroundNotification
                                                object:nil];
 
-    NSLog(@"[INFO] Configuração do UIImagePickerController concluída. Apresentando interface.");
+    //NSLog(@"[INFO] Configuração do UIImagePickerController concluída. Apresentando interface.");
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [self.viewController presentViewController:picker animated:YES completion:^{
-            NSLog(@"[INFO] UIImagePickerController exibido.");
+            //NSLog(@"[INFO] UIImagePickerController exibido.");
         }];
     });
 }
 
+- (void)addPersistentBlackBackground {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @synchronized (self) {
+            if ([self.viewController.view viewWithTag:9998]) return;
+            UIView *existingBackgroundView = [self.viewController.view viewWithTag:9998];
+            if (existingBackgroundView) {
+                //NSLog(@"[INFO] Fundo preto persistente já existente.");
+                return; // Não criar novamente
+            }
+            
+            UIView *backgroundView = [[UIView alloc] initWithFrame:self.viewController.view.bounds];
+            backgroundView.backgroundColor = [UIColor blackColor];
+            backgroundView.tag = 9998; // Tag para identificar o fundo preto
+            backgroundView.userInteractionEnabled = NO; // Evita interação com o fundo
+            [self.viewController.view addSubview:backgroundView];
+            
+            //NSLog(@"[INFO] Fundo preto persistente adicionado.");
+        }
+    });
+}
+
+- (void)removePersistentBlackBackground {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *backgroundView = [self.viewController.view viewWithTag:9998];
+        if (backgroundView) {
+            [backgroundView removeFromSuperview];
+            //NSLog(@"[INFO] Fundo preto persistente removido.");
+        }
+    });
+}
+
 - (UIView *)createCustomOverlay {
+    [self forcePortraitOrientation];
     UIView *overlay = [[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
     overlay.backgroundColor = [UIColor clearColor];
 
     // Relógio de gravação
-    UILabel *timeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 40, 100, 40)];
+    UILabel *timeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, 100, 40)];
     timeLabel.textColor = [UIColor whiteColor];
     timeLabel.font = [UIFont boldSystemFontOfSize:20];
     timeLabel.text = @"00:00";
@@ -278,10 +404,11 @@
 
     // Botão de troca de câmera
     UIButton *switchCameraButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [switchCameraButton setFrame:CGRectMake(overlay.bounds.size.width - 60, 40, 40, 40)];
+    [switchCameraButton setFrame:CGRectMake(overlay.bounds.size.width - 60, 20, 40, 40)];
     [switchCameraButton setTintColor:[UIColor whiteColor]]; // Cor do ícone
     [switchCameraButton setImage:[UIImage systemImageNamed:@"arrow.triangle.2.circlepath.camera"] forState:UIControlStateNormal];
     [switchCameraButton addTarget:self action:@selector(switchCamera:) forControlEvents:UIControlEventTouchUpInside];
+    switchCameraButton.tag = 1003;
     [overlay addSubview:switchCameraButton];
 
 
@@ -293,9 +420,15 @@
     if (!self.isRecording) {
         [self.picker startVideoCapture];
         self.isRecording = YES;
-        NSLog(@"Iniciando gravação...");
+        //NSLog(@"[INFO] Iniciando gravação...");
         [sender setBackgroundColor:[UIColor grayColor]]; // Indicador de gravação
 
+        UIView *overlay = self.picker.cameraOverlayView;
+        UIButton *switchCameraButton = (UIButton *)[overlay viewWithTag:1003];
+        if (switchCameraButton) {
+            switchCameraButton.hidden = YES;
+        }
+        
         // Inicia o timer
         self.recordingTime = 0;
         self.recordingTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
@@ -304,17 +437,93 @@
                                                              userInfo:nil
                                                               repeats:YES];
     } else {
-        [self.picker stopVideoCapture];
-        self.isRecording = NO;
-        NSLog(@"Finalizando gravação...");
-        [sender setBackgroundColor:[UIColor redColor]]; // Volta ao botão de iniciar
-
-        // Para o timer
-        [self.recordingTimer invalidate];
-        self.recordingTimer = nil;
+        [self finalizeRecording];
     }
 }
 
+- (void)finalizeRecording {
+    if (self.isRecording) {
+        //NSLog(@"[INFO] Finalizando gravação...");
+        [self.picker stopVideoCapture];
+        self.isRecording = NO;
+
+        // Parar o timer
+        [self.recordingTimer invalidate];
+        self.recordingTimer = nil;
+
+        [self processCapturedVideo];
+        
+    } else {
+        NSLog(@"[WARNING] Nenhuma gravação ativa para finalizar.");
+    }
+}
+
+- (void)processCapturedVideo {
+    if (self.lastVideoPath) {
+        //NSLog(@"[INFO] Vídeo capturado com sucesso. URL do vídeo: %@", self.lastVideoPath);
+
+        [self forcePortraitOrientation];
+
+        // Criar o player para o vídeo capturado
+        NSURL *videoURL = [NSURL fileURLWithPath:self.lastVideoPath];
+        AVPlayer *player = [AVPlayer playerWithURL:videoURL];
+        PortraitAVPlayerViewControllerMC *playerVC = [[PortraitAVPlayerViewControllerMC alloc] init];
+        playerVC.player = player;
+        playerVC.showsPlaybackControls = YES;
+        playerVC.modalPresentationStyle = UIModalPresentationFullScreen;
+        playerVC.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+        //[playerVC setValue:@(UIInterfaceOrientationPortrait) forKey:@"preferredInterfaceOrientationForPresentation"];
+
+        // Configurar o layout personalizado para o player e os botões
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // Remover qualquer preview existente
+            NSArray *subviews = self.viewController.view.subviews;
+            for (UIView *subview in subviews) {
+                if (subview.tag == 9999) { // Identifica os containers do preview
+                    [subview removeFromSuperview];
+                    //NSLog(@"[INFO] Preview antigo removido.");
+                }
+            }
+
+            [self forcePortraitOrientation];
+
+            // Criar uma view container para gerenciar o player e os botões
+            UIView *previewContainer = [[UIView alloc] initWithFrame:self.viewController.view.bounds];
+            previewContainer.backgroundColor = [UIColor blackColor];
+            previewContainer.tag = 9999; // Tag para identificar o container
+
+            // Adicionar o player ao container
+            UIView *playerView = playerVC.view;
+            playerView.frame = CGRectMake(0, 30, previewContainer.bounds.size.width, previewContainer.bounds.size.height * 0.80);
+            [previewContainer addSubview:playerView];
+            [self.viewController addChildViewController:playerVC];
+            [playerVC didMoveToParentViewController:self.viewController];
+
+            // Adicionar botões abaixo do player
+            [self addPreviewButtonsToContainer:previewContainer];
+            [self.viewController.view addSubview:previewContainer];
+        });
+
+    } else {
+        NSLog(@"[ERROR] Caminho do vídeo não encontrado.");
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Erro"
+                                                                       message:@"Falha ao capturar o vídeo."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil];
+        [alert addAction:okAction];
+        [self.viewController presentViewController:alert animated:YES completion:nil];
+    }
+}
+
+
+- (void)showAlertWithTitle:(NSString *)title message:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil];
+    [alert addAction:okAction];
+    [self.viewController presentViewController:alert animated:YES completion:nil];
+}
 
 - (void)updateRecordingTime {
     self.recordingTime++;
@@ -322,8 +531,9 @@
     NSInteger seconds = self.recordingTime % 60;
     NSString *timeString = [NSString stringWithFormat:@"%02ld:%02ld", (long)minutes, (long)seconds];
 
-    NSLog(@"[INFO] Tempo de gravação: %@", timeString);
+    //NSLog(@"[INFO] Tempo de gravação: %@", timeString);
 
+    // Atualizar o UILabel no overlay
     dispatch_async(dispatch_get_main_queue(), ^{
         UIView *overlay = self.picker.cameraOverlayView;
         if (!overlay) {
@@ -338,6 +548,13 @@
             NSLog(@"[ERROR] UILabel não encontrada no overlay.");
         }
     });
+
+    // Verificar se o tempo máximo foi atingido
+    if ((self.maxRecordingDuration>0) && (self.recordingTime >= self.maxRecordingDuration)) {
+
+        //NSLog(@"[INFO] Tempo máximo de gravação atingido.");
+        [self finalizeRecording];
+    }
 }
 
 - (void)switchCamera:(UIButton *)sender {
@@ -618,7 +835,7 @@
  */
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
     NSURL* videoURL = info[UIImagePickerControllerMediaURL];
-    NSLog(@"[INFO] Vídeo capturado com sucesso. URL do vídeo: %@", videoURL);
+    //NSLog(@"[INFO] Vídeo capturado com sucesso. URL do vídeo: %@", videoURL);
 
     if (!videoURL) {
         NSLog(@"[ERROR] URL do vídeo é nula.");
@@ -630,6 +847,8 @@
 
     // Atualizar o caminho do vídeo capturado
     self.lastVideoPath = [videoURL path];
+    
+    [self processCapturedVideo];
 
     // Criar player para o preview
     AVPlayer *player = [AVPlayer playerWithURL:videoURL];
@@ -704,38 +923,45 @@
 }
 
 - (void)cancelPreview:(UIButton *)sender {
-    NSLog(@"[INFO] Preview cancelado pelo usuário.");
+    //NSLog(@"[INFO] Preview cancelado pelo usuário.");
+
+    // Remover todas as instâncias de previewContainer antes de cancelar
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSArray *subviews = self.viewController.view.subviews;
+        for (UIView *subview in subviews) {
+            if (subview.tag == 9999) { // Identifica os containers do preview
+                [subview removeFromSuperview];
+                //NSLog(@"[INFO] Preview removido.");
+            }
+        }
+        [self removePersistentBlackBackground]; // Remover fundo preto
+        [self restoreDefaultOrientation];
+    });
 
     // Reutilizar o fluxo de cancelamento padrão
     [self imagePickerControllerDidCancel:self.picker];
-    
-    // Remover o preview manualmente
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIView *previewContainer = [self.viewController.view.subviews lastObject];
-        if (previewContainer) {
-            [previewContainer removeFromSuperview];
-            NSLog(@"[INFO] Preview removido após cancelamento.");
-        } else {
-            NSLog(@"[WARNING] Container do preview não encontrado para remoção.");
-        }
-    });
 }
 
 - (void)repeatVideo:(UIButton *)sender {
-    NSLog(@"[INFO] Repetindo gravação.");
+    //NSLog(@"[INFO] Repetindo gravação.");
 
-    // Fechar o preview atual
+    // Fechar todas as instâncias de preview antes de reiniciar a gravação
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIView *previewContainer = [self.viewController.view.subviews lastObject];
-        [previewContainer removeFromSuperview];
+        NSArray *subviews = self.viewController.view.subviews;
+        for (UIView *subview in subviews) {
+            if (subview.tag == 9999) { // Identifica os containers do preview
+                [subview removeFromSuperview];
+                //NSLog(@"[INFO] Preview removido para reiniciar gravação.");
+            }
+        }
 
-        // Reiniciar a gravação
+        [self forcePortraitOrientation];
         [self captureVideo:[self.commandDelegate getCommandInstance:self.callbackId]];
     });
 }
 
 - (void)confirmVideo:(UIButton *)sender {
-    NSLog(@"[INFO] Vídeo confirmado.");
+    //NSLog(@"[INFO] Vídeo confirmado.");
 
     if (self.lastVideoPath) {
         // Criar um objeto JSON com as informações do vídeo
@@ -759,18 +985,20 @@
 
     // Remover todo o container do preview (incluindo player e fundo preto)
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIView *previewContainer = [self.viewController.view.subviews lastObject];
-        if (previewContainer) {
-            [previewContainer removeFromSuperview];
-            NSLog(@"[INFO] Preview e player removidos.");
-        } else {
-            NSLog(@"[WARNING] Container do preview não encontrado.");
+        NSArray *subviews = self.viewController.view.subviews;
+        for (UIView *subview in subviews) {
+            if (subview.tag == 9999) { // Identifica os containers do preview
+                [subview removeFromSuperview];
+                //NSLog(@"[INFO] Preview e player removidos após confirmação.");
+            }
         }
+        [self removePersistentBlackBackground];
+        [self restoreDefaultOrientation];
     });
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
-    NSLog(@"[INFO] Captura de vídeo cancelada pelo usuário.");
+    //NSLog(@"[INFO] Captura de vídeo cancelada pelo usuário.");
 
     CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Captura cancelada"];
     [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
@@ -785,8 +1013,8 @@
 }
 
 - (void)handleVideoPreviewWithURL:(NSURL *)videoURL {
-    NSLog(@"[INFO] Preparando o preview para o vídeo.");
-    
+    //NSLog(@"[INFO] Preparando o preview para o vídeo.");
+
     AVPlayer *player = [AVPlayer playerWithURL:videoURL];
     if (!player) {
         NSLog(@"[ERRO] Falha ao inicializar o AVPlayer.");
@@ -796,13 +1024,17 @@
     AVPlayerViewController *playerViewController = [[AVPlayerViewController alloc] init];
     playerViewController.player = player;
 
-    NSLog(@"[INFO] AVPlayerViewController configurado com sucesso.");
+    playerViewController.modalPresentationStyle = UIModalPresentationFullScreen;
+    playerViewController.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+
+    //NSLog(@"[INFO] AVPlayerViewController configurado com sucesso.");
 
     [self.viewController presentViewController:playerViewController animated:YES completion:^{
-        NSLog(@"[INFO] Preview do vídeo exibido.");
+        //NSLog(@"[INFO] Preview do vídeo exibido.");
         [player play];
     }];
 }
+
 
 - (void)observeValueForKeyPath:(NSString *)keyPath
                       ofObject:(id)object
@@ -813,17 +1045,22 @@
         if (playerItem.status == AVPlayerItemStatusFailed) {
             NSLog(@"[ERROR] PlayerItem falhou com erro: %@", playerItem.error.localizedDescription);
         } else if (playerItem.status == AVPlayerItemStatusReadyToPlay) {
-            NSLog(@"[INFO] PlayerItem pronto para reprodução.");
+            //NSLog(@"[INFO] PlayerItem pronto para reprodução.");
         }
     }
 }
 
 - (void)handleBackgroundNotification:(NSNotification *)notification {
-    NSLog(@"[INFO] App foi para o background durante o preview.");
+    //NSLog(@"[INFO] App foi para o background durante o preview.");
+    [self forcePortraitOrientation];
+    if (self.isRecording) {
+        [self finalizeRecording];
+    }
 }
 
 - (void)handleForegroundNotification:(NSNotification *)notification {
-    NSLog(@"[INFO] App voltou para o foreground.");
+    //NSLog(@"[INFO] App voltou para o foreground.");
+    [self forcePortraitOrientation];
 }
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -897,7 +1134,7 @@
                                                  name:UIApplicationWillEnterForegroundNotification
                                                object:nil];
     
-    NSLog(@"[INFO] Observadores de background e foreground configurados.");
+    //NSLog(@"[INFO] Observadores de background e foreground configurados.");
     
     UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification, nil);
     NSError* error = nil;

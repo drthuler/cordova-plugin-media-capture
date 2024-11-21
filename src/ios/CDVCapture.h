@@ -53,6 +53,7 @@ typedef NSUInteger CDVCaptureError;
 @property (nonatomic, strong) NSString *lastVideoPath; // Propriedade para armazenar o caminho do último vídeo capturado
 @property (nonatomic, strong) UIImagePickerController *picker;
 @property (nonatomic, assign) NSInteger recordingTime; // Tempo de gravação em segundos
+@property (nonatomic, assign) NSInteger maxRecordingDuration; // Tempo máximo de gravação em segundos
 @property (nonatomic, strong) NSTimer *recordingTimer; // Timer para atualizar o relógio
 @property (nonatomic, assign) BOOL isRecording; // Indicador de status de gravação
 @property (nonatomic, strong) CDVImagePicker* pickerController;
@@ -125,3 +126,4 @@ typedef NSUInteger CDVCaptureError;
 - (NSString*)formatTime:(int)interval;
 - (void)updateTime;
 @end
+
