@@ -20,6 +20,7 @@
 #import "CDVCapture.h"
 #import "CDVFile.h"
 #import <Cordova/CDVAvailability.h>
+#import <AVKit/AVKit.h>
 
 #define kW3CMediaFormatHeight @"height"
 #define kW3CMediaFormatWidth @"width"
@@ -77,9 +78,10 @@
 @implementation CDVCapture
 @synthesize inUse;
 
-- (void)pluginInitialize
-{
+- (void)pluginInitialize {
     self.inUse = NO;
+    self.recordingTime = 0;
+    self.recordingTimer = nil;
 }
 
 - (void)captureAudio:(CDVInvokedUrlCommand*)command
@@ -211,198 +213,138 @@
     return result;
 }
 
-- (void)captureVideoOld:(CDVInvokedUrlCommand*)command
-{
-    NSString* callbackId = command.callbackId;
-    NSDictionary* options = [command argumentAtIndex:0];
-
-    if ([options isKindOfClass:[NSNull class]]) {
-        options = [NSDictionary dictionary];
-    }
-
-    // options could contain limit, duration, quality and mode
-    // taking more than one video (limit) is only supported if provide own controls via cameraOverlayView property
-    NSNumber* duration = [options objectForKey:@"duration"];
-    NSNumber* quality = [options objectForKey:@"quality"];
-    NSString* mediaType = nil;
-
-    if ([UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
-        // there is a camera, it is available, make sure it can do movies
-        pickerController = [[CDVImagePicker alloc] init];
-
-        NSArray* types = nil;
-        if ([UIImagePickerController respondsToSelector:@selector(availableMediaTypesForSourceType:)]) {
-            types = [UIImagePickerController availableMediaTypesForSourceType:UIImagePickerControllerSourceTypeCamera];
-            // NSLog(@"MediaTypes: %@", [types description]);
-
-            if ([types containsObject:(NSString*)kUTTypeMovie]) {
-                mediaType = (NSString*)kUTTypeMovie;
-            } else if ([types containsObject:(NSString*)kUTTypeVideo]) {
-                mediaType = (NSString*)kUTTypeVideo;
-            }
-        }
-    }
-    if (!mediaType) {
-        // don't have video camera return error
-        NSLog(@"Capture.captureVideo: video mode not available.");
-        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_NOT_SUPPORTED];
-        [self.commandDelegate sendPluginResult:result callbackId:callbackId];
-        pickerController = nil;
-    } else {
-        [self showAlertIfAccessProhibited];
-
-        pickerController.delegate = self;
-        pickerController.sourceType = UIImagePickerControllerSourceTypeCamera;
-        pickerController.allowsEditing = NO;
-        // iOS 3.0
-        pickerController.mediaTypes = [NSArray arrayWithObjects:mediaType, nil];
-
-        if ([mediaType isEqualToString:(NSString*)kUTTypeMovie]){
-            if (duration) {
-                pickerController.videoMaximumDuration = [duration doubleValue];
-            }
-            //NSLog(@"pickerController.videoMaximumDuration = %f", pickerController.videoMaximumDuration);
-        }
-
-        // iOS 4.0
-        if ([pickerController respondsToSelector:@selector(cameraCaptureMode)]) {
-            pickerController.cameraCaptureMode = UIImagePickerControllerCameraCaptureModeVideo;
-            switch ((int) (quality ? [quality doubleValue] * 10 : -1)) {
-                case 0:
-                    pickerController.videoQuality = UIImagePickerControllerQualityTypeLow;
-                    break;
-                case 5:
-                    pickerController.videoQuality = UIImagePickerControllerQualityTypeMedium;
-                    break;
-                case 10:
-                default:
-                    pickerController.videoQuality = UIImagePickerControllerQualityTypeHigh;
-                    break;
-            }
-            // pickerController.cameraDevice = UIImagePickerControllerCameraDeviceRear;
-            // pickerController.cameraFlashMode = UIImagePickerControllerCameraFlashModeAuto;
-        }
-        // CDVImagePicker specific property
-        pickerController.callbackId = callbackId;
-        pickerController.modalPresentationStyle = UIModalPresentationCurrentContext;
-        [self.viewController presentViewController:pickerController animated:YES completion:nil];
-    }
-}
-
 - (void)captureVideo:(CDVInvokedUrlCommand*)command {
-    NSString* callbackId = command.callbackId;
-    NSDictionary* options = [command argumentAtIndex:0];
+    self.callbackId = command.callbackId;
+    NSLog(@"[INFO] Iniciando captura de vídeo.");
 
-    if ([options isKindOfClass:[NSNull class]]) {
-        options = [NSDictionary dictionary];
-    }
-
-    NSNumber* duration = [options objectForKey:@"duration"];
-    NSNumber* quality = [options objectForKey:@"quality"];
-
-    // Verifica permissões de acesso à câmera
-    if (![self hasCameraAccess]) {
-        [self showPermissionsAlert];
+    UIImagePickerController* picker = [[UIImagePickerController alloc] init];
+    if (![UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera]) {
+        NSLog(@"[ERROR] Câmera não disponível neste dispositivo.");
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Câmera não disponível"];
+        [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
         return;
     }
 
-    // Configuração da sessão de captura
-    AVCaptureSession* captureSession = [[AVCaptureSession alloc] init];
-    captureSession.sessionPreset = AVCaptureSessionPresetHigh;
+    picker.delegate = self;
+    picker.sourceType = UIImagePickerControllerSourceTypeCamera;
+    picker.mediaTypes = @[(NSString *)kUTTypeMovie];
+    picker.videoQuality = UIImagePickerControllerQualityTypeHigh; // Força alta qualidade
+    picker.videoMaximumDuration = 120; // Limita a duração a 2 minutos
+    picker.cameraCaptureMode = UIImagePickerControllerCameraCaptureModeVideo;
+    picker.showsCameraControls = NO;
+    picker.cameraOverlayView = [self createCustomOverlay];
+    self.picker = picker;
 
-    // Configuração do dispositivo de entrada (câmera)
-    AVCaptureDevice* videoDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
-    NSError* error = nil;
-    AVCaptureDeviceInput* videoInput = [AVCaptureDeviceInput deviceInputWithDevice:videoDevice error:&error];
-    if (error) {
-        NSLog(@"Erro ao configurar câmera: %@", error.localizedDescription);
-        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_INTERNAL_ERR];
-        [self.commandDelegate sendPluginResult:result callbackId:callbackId];
-        return;
-    }
-    [captureSession addInput:videoInput];
+    // Adicionando observadores para notificações de background/foreground
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleBackgroundNotification:)
+                                                 name:UIApplicationDidEnterBackgroundNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleForegroundNotification:)
+                                                 name:UIApplicationWillEnterForegroundNotification
+                                               object:nil];
 
-    // Configuração da saída de vídeo
-    AVCaptureMovieFileOutput* movieOutput = [[AVCaptureMovieFileOutput alloc] init];
-    if (duration) {
-        CMTime maxDuration = CMTimeMake([duration intValue], 1);
-        movieOutput.maxRecordedDuration = maxDuration;
-    }
-    [captureSession addOutput:movieOutput];
+    NSLog(@"[INFO] Configuração do UIImagePickerController concluída. Apresentando interface.");
 
-    // Caminho do arquivo de saída
-    NSString* outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"output.mov"];
-    NSURL* outputURL = [NSURL fileURLWithPath:outputPath];
-
-    // Inicia a gravação
-    [captureSession startRunning];
-    [movieOutput startRecordingToOutputFileURL:outputURL recordingDelegate:self];
-
-    // Salva referências necessárias
-    self.captureSession = captureSession;
-    self.movieOutput = movieOutput;
-    self.callbackId = callbackId;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.viewController presentViewController:picker animated:YES completion:^{
+            NSLog(@"[INFO] UIImagePickerController exibido.");
+        }];
+    });
 }
 
-// Delegate para quando a gravação for concluída
-- (void)fileOutput:(AVCaptureFileOutput*)output didFinishRecordingToOutputFileAtURL:(NSURL*)outputFileURL fromConnections:(NSArray*)connections error:(NSError*)error {
-    [self.captureSession stopRunning];
-    self.captureSession = nil;
+- (UIView *)createCustomOverlay {
+    UIView *overlay = [[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    overlay.backgroundColor = [UIColor clearColor];
 
-    CDVPluginResult* result;
-    if (error) {
-        NSLog(@"Erro durante gravação: %@", error.localizedDescription);
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_INTERNAL_ERR];
+    // Relógio de gravação
+    UILabel *timeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 40, 100, 40)];
+    timeLabel.textColor = [UIColor whiteColor];
+    timeLabel.font = [UIFont boldSystemFontOfSize:20];
+    timeLabel.text = @"00:00";
+    timeLabel.tag = 1001;
+    [overlay addSubview:timeLabel];
+
+    // Botão de gravação
+    UIButton *recordButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    [recordButton setFrame:CGRectMake(overlay.center.x - 40, overlay.bounds.size.height - 120, 80, 80)];
+    [recordButton setBackgroundColor:[UIColor redColor]];
+    recordButton.layer.cornerRadius = 40;
+    [recordButton addTarget:self action:@selector(toggleRecording:) forControlEvents:UIControlEventTouchUpInside];
+    recordButton.tag = 1002; // Tag para referência
+    [overlay addSubview:recordButton];
+
+    // Botão de troca de câmera
+    UIButton *switchCameraButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    [switchCameraButton setFrame:CGRectMake(overlay.bounds.size.width - 60, 40, 40, 40)];
+    [switchCameraButton setBackgroundColor:[UIColor lightGrayColor]];
+    [switchCameraButton addTarget:self action:@selector(switchCamera:) forControlEvents:UIControlEventTouchUpInside];
+    [overlay addSubview:switchCameraButton];
+
+    return overlay;
+}
+
+
+- (void)toggleRecording:(UIButton *)sender {
+    if (!self.isRecording) {
+        [self.picker startVideoCapture];
+        self.isRecording = YES;
+        NSLog(@"Iniciando gravação...");
+        [sender setBackgroundColor:[UIColor grayColor]]; // Indicador de gravação
+
+        // Inicia o timer
+        self.recordingTime = 0;
+        self.recordingTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+                                                               target:self
+                                                             selector:@selector(updateRecordingTime)
+                                                             userInfo:nil
+                                                              repeats:YES];
     } else {
-        // Retorna informações do arquivo gravado no formato esperado
-        NSDictionary* fileDict = [self getMediaDictionaryFromPath:[outputFileURL path] ofType:@"video/quicktime"];
-        NSArray* fileArray = @[fileDict];
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:fileArray];
+        [self.picker stopVideoCapture];
+        self.isRecording = NO;
+        NSLog(@"Finalizando gravação...");
+        [sender setBackgroundColor:[UIColor redColor]]; // Volta ao botão de iniciar
+
+        // Para o timer
+        [self.recordingTimer invalidate];
+        self.recordingTimer = nil;
     }
-
-    [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
 }
 
-// Método para verificar permissões da câmera
-- (BOOL)hasCameraAccess {
-    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
-    return status == AVAuthorizationStatusAuthorized || status == AVAuthorizationStatusNotDetermined;
+
+- (void)updateRecordingTime {
+    self.recordingTime++;
+    NSInteger minutes = self.recordingTime / 60;
+    NSInteger seconds = self.recordingTime % 60;
+    NSString *timeString = [NSString stringWithFormat:@"%02ld:%02ld", (long)minutes, (long)seconds];
+
+    NSLog(@"[INFO] Tempo de gravação: %@", timeString);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *overlay = self.picker.cameraOverlayView;
+        if (!overlay) {
+            NSLog(@"[ERROR] Overlay não encontrado.");
+            return;
+        }
+
+        UILabel *timeLabel = (UILabel *)[overlay viewWithTag:1001];
+        if (timeLabel) {
+            timeLabel.text = timeString;
+        } else {
+            NSLog(@"[ERROR] UILabel não encontrada no overlay.");
+        }
+    });
 }
 
-// Mostra alerta se o acesso for negado
-- (void)showPermissionsAlert {
-    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Permissões Necessárias"
-                                                                              message:@"Acesse as configurações e permita o uso da câmera para continuar."
-                                                                       preferredStyle:UIAlertControllerStyleAlert];
-
-    UIAlertAction *settingsAction = [UIAlertAction actionWithTitle:@"Configurações" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString] options:@{} completionHandler:nil];
-    }];
-    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancelar" style:UIAlertActionStyleCancel handler:nil];
-
-    [alertController addAction:settingsAction];
-    [alertController addAction:cancelAction];
-
-    [self.viewController presentViewController:alertController animated:YES completion:nil];
-}
-
-// Converte o caminho do arquivo em um dicionário de mídia
-- (NSDictionary*)getMediaDictionaryFromPath:(NSString*)fullPath ofType:(NSString*)type {
-    NSFileManager* fileMgr = [[NSFileManager alloc] init];
-    NSMutableDictionary* fileDict = [NSMutableDictionary dictionaryWithCapacity:6];
-
-    // Adiciona informações do arquivo
-    [fileDict setObject:[fullPath lastPathComponent] forKey:@"name"];
-    [fileDict setObject:fullPath forKey:@"fullPath"];
-    [fileDict setObject:(type ? type : @"video/quicktime") forKey:@"type"];
-
-    NSDictionary* fileAttrs = [fileMgr attributesOfItemAtPath:fullPath error:nil];
-    [fileDict setObject:[NSNumber numberWithUnsignedLongLong:[fileAttrs fileSize]] forKey:@"size"];
-    NSDate* modDate = [fileAttrs fileModificationDate];
-    NSNumber* msDate = [NSNumber numberWithDouble:[modDate timeIntervalSince1970] * 1000];
-    [fileDict setObject:msDate forKey:@"lastModifiedDate"];
-
-    return fileDict;
+- (void)switchCamera:(UIButton *)sender {
+    if (self.picker.cameraDevice == UIImagePickerControllerCameraDeviceRear) {
+        self.picker.cameraDevice = UIImagePickerControllerCameraDeviceFront;
+        NSLog(@"Câmera frontal ativada.");
+    } else {
+        self.picker.cameraDevice = UIImagePickerControllerCameraDeviceRear;
+        NSLog(@"Câmera traseira ativada.");
+    }
 }
 
 - (CDVPluginResult*)processVideo:(NSString*)moviePath forCallbackId:(NSString*)callbackId
@@ -590,6 +532,8 @@
                 NSURL* fileURL = [NSURL fileURLWithPath:fullPath];
                 NSError* err = nil;
 
+                NSLog(@"Caminho do vídeo para preview: %@", fileURL);
+                
                 AVAudioPlayer* avPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:fileURL error:&err];
                 if (!err) {
                     // get the data
@@ -659,6 +603,7 @@
     [self imagePickerController:picker didFinishPickingMediaWithInfo:editingInfo];
 }
 
+
 /* Called when image/movie is finished recording.
  * Calls success or error code as appropriate
  * if successful, result  contains an array (with just one entry since can only get one image unless build own camera UI) of MediaFile object representing the image
@@ -668,55 +613,135 @@
  *      lastModifiedDate
  *      size
  */
-- (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info
-{
-    CDVImagePicker* cameraPicker = (CDVImagePicker*)picker;
-    NSString* callbackId = cameraPicker.callbackId;
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
+    NSURL* videoURL = info[UIImagePickerControllerMediaURL];
+    NSLog(@"[INFO] Vídeo capturado com sucesso. URL do vídeo: %@", videoURL);
 
-    [[picker presentingViewController] dismissViewControllerAnimated:YES completion:nil];
+    if (!videoURL) {
+        NSLog(@"[ERROR] URL do vídeo é nula.");
+        CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Erro ao acessar o vídeo"];
+        [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+        [picker dismissViewControllerAnimated:YES completion:nil];
+        return;
+    }
 
-    CDVPluginResult* result = nil;
+    // Exibir preview com ações
+    AVPlayer *player = [AVPlayer playerWithURL:videoURL];
+    AVPlayerViewController *playerVC = [[AVPlayerViewController alloc] init];
+    playerVC.player = player;
 
-    UIImage* image = nil;
-    NSString* mediaType = [info objectForKey:UIImagePickerControllerMediaType];
-    if (!mediaType || [mediaType isEqualToString:(NSString*)kUTTypeImage]) {
-        // mediaType is nil then only option is UIImagePickerControllerOriginalImage
-        if ([UIImagePickerController respondsToSelector:@selector(allowsEditing)] &&
-            (cameraPicker.allowsEditing && [info objectForKey:UIImagePickerControllerEditedImage])) {
-            image = [info objectForKey:UIImagePickerControllerEditedImage];
-        } else {
-            image = [info objectForKey:UIImagePickerControllerOriginalImage];
-        }
-    }
-    if (image != nil) {
-        // mediaType was image
-        result = [self processImage:image type:cameraPicker.mimeType forCallbackId:callbackId];
-    } else if ([mediaType isEqualToString:(NSString*)kUTTypeMovie]) {
-        // process video
-        NSString* moviePath = [(NSURL *)[info objectForKey:UIImagePickerControllerMediaURL] path];
-        if (moviePath) {
-            result = [self processVideo:moviePath forCallbackId:callbackId];
-        }
-    }
-    if (!result) {
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_INTERNAL_ERR];
-    }
-    [self.commandDelegate sendPluginResult:result callbackId:callbackId];
-    pickerController = nil;
+    // Adicionar botões de ação
+    UIView *overlay = [[UIView alloc] initWithFrame:playerVC.view.bounds];
+    overlay.backgroundColor = [UIColor clearColor];
+
+    // Botão Confirmar
+    UIButton *confirmButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    confirmButton.frame = CGRectMake(overlay.center.x - 80, overlay.bounds.size.height - 80, 70, 40);
+    [confirmButton setTitle:@"Confirmar" forState:UIControlStateNormal];
+    [confirmButton setBackgroundColor:[UIColor greenColor]];
+    [confirmButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    confirmButton.layer.cornerRadius = 5;
+    [confirmButton addTarget:self action:@selector(confirmVideo:) forControlEvents:UIControlEventTouchUpInside];
+    [overlay addSubview:confirmButton];
+
+    // Botão Repetir
+    UIButton *repeatButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    repeatButton.frame = CGRectMake(overlay.center.x + 10, overlay.bounds.size.height - 80, 70, 40);
+    [repeatButton setTitle:@"Repetir" forState:UIControlStateNormal];
+    [repeatButton setBackgroundColor:[UIColor redColor]];
+    [repeatButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    repeatButton.layer.cornerRadius = 5;
+    [repeatButton addTarget:self action:@selector(repeatVideo:) forControlEvents:UIControlEventTouchUpInside];
+    [overlay addSubview:repeatButton];
+
+    [playerVC.contentOverlayView addSubview:overlay];
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [picker dismissViewControllerAnimated:YES completion:^{
+            NSLog(@"[INFO] Exibindo player para pré-visualização do vídeo.");
+            [self.viewController presentViewController:playerVC animated:YES completion:^{
+                [player play];
+            }];
+        }];
+    });
 }
 
-- (void)imagePickerControllerDidCancel:(UIImagePickerController*)picker
-{
-    CDVImagePicker* cameraPicker = (CDVImagePicker*)picker;
-    NSString* callbackId = cameraPicker.callbackId;
-
-    [[picker presentingViewController] dismissViewControllerAnimated:YES completion:nil];
-
-    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageToErrorObject:CAPTURE_NO_MEDIA_FILES];
-    [self.commandDelegate sendPluginResult:result callbackId:callbackId];
-    pickerController = nil;
+// Métodos para as ações dos botões
+- (void)confirmVideo:(UIButton *)sender {
+    NSLog(@"[INFO] Vídeo confirmado.");
+    // Enviar o resultado para o Cordova
+    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"Vídeo confirmado"];
+    [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+    [self.viewController dismissViewControllerAnimated:YES completion:nil];
 }
 
+- (void)repeatVideo:(UIButton *)sender {
+    NSLog(@"[INFO] Repetindo gravação.");
+    [self.viewController dismissViewControllerAnimated:YES completion:^{
+        [self captureVideo:nil];
+    }];
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    NSLog(@"[INFO] Captura de vídeo cancelada pelo usuário.");
+
+    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Captura cancelada"];
+    [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+
+    [picker dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)applicationDidEnterBackground:(UIApplication*)application {
+    if (self.pickerController) {
+        [self.pickerController dismissViewControllerAnimated:NO completion:nil];
+    }
+}
+
+- (void)handleVideoPreviewWithURL:(NSURL *)videoURL {
+    NSLog(@"[INFO] Preparando o preview para o vídeo.");
+    
+    AVPlayer *player = [AVPlayer playerWithURL:videoURL];
+    if (!player) {
+        NSLog(@"[ERRO] Falha ao inicializar o AVPlayer.");
+        return;
+    }
+
+    AVPlayerViewController *playerViewController = [[AVPlayerViewController alloc] init];
+    playerViewController.player = player;
+
+    NSLog(@"[INFO] AVPlayerViewController configurado com sucesso.");
+
+    [self.viewController presentViewController:playerViewController animated:YES completion:^{
+        NSLog(@"[INFO] Preview do vídeo exibido.");
+        [player play];
+    }];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context {
+    if ([keyPath isEqualToString:@"status"]) {
+        AVPlayerItem* playerItem = (AVPlayerItem *)object;
+        if (playerItem.status == AVPlayerItemStatusFailed) {
+            NSLog(@"[ERROR] PlayerItem falhou com erro: %@", playerItem.error.localizedDescription);
+        } else if (playerItem.status == AVPlayerItemStatusReadyToPlay) {
+            NSLog(@"[INFO] PlayerItem pronto para reprodução.");
+        }
+    }
+}
+
+- (void)handleBackgroundNotification:(NSNotification *)notification {
+    NSLog(@"[INFO] App foi para o background durante o preview.");
+}
+
+- (void)handleForegroundNotification:(NSNotification *)notification {
+    NSLog(@"[INFO] App voltou para o foreground.");
+}
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillEnterForegroundNotification object:nil];
+}
 @end
 
 @implementation CDVAudioNavigationController
@@ -775,6 +800,18 @@
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleBackgroundNotification:)
+                                                 name:UIApplicationDidEnterBackgroundNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleForegroundNotification:)
+                                                 name:UIApplicationWillEnterForegroundNotification
+                                               object:nil];
+    
+    NSLog(@"[INFO] Observadores de background e foreground configurados.");
+    
     UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification, nil);
     NSError* error = nil;
 

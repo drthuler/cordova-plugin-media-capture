@@ -45,11 +45,29 @@ typedef NSUInteger CDVCaptureError;
 
 @end
 
-@interface CDVCapture : CDVPlugin <AVCaptureFileOutputRecordingDelegate>
-
-@property (nonatomic, strong) AVCaptureSession* captureSession;
-@property (nonatomic, strong) AVCaptureMovieFileOutput* movieOutput;
+@interface CDVCapture : CDVPlugin <UIImagePickerControllerDelegate, UINavigationControllerDelegate>
+{
+    CDVImagePicker* pickerController;
+    BOOL inUse;
+}
+@property (nonatomic, strong) UIImagePickerController *picker;
+@property (nonatomic, assign) NSInteger recordingTime; // Tempo de gravação em segundos
+@property (nonatomic, strong) NSTimer *recordingTimer; // Timer para atualizar o relógio
+@property (nonatomic, assign) BOOL isRecording; // Indicador de status de gravação
+@property (nonatomic, strong) CDVImagePicker* pickerController;
+@property BOOL inUse;
 @property (nonatomic, strong) NSString* callbackId;
+- (void)captureAudio:(CDVInvokedUrlCommand*)command;
+- (void)captureImage:(CDVInvokedUrlCommand*)command;
+- (CDVPluginResult*)processImage:(UIImage*)image type:(NSString*)mimeType forCallbackId:(NSString*)callbackId;
+- (void)captureVideo:(CDVInvokedUrlCommand*)command;
+- (CDVPluginResult*)processVideo:(NSString*)moviePath forCallbackId:(NSString*)callbackId;
+- (void)getMediaModes:(CDVInvokedUrlCommand*)command;
+- (void)getFormatData:(CDVInvokedUrlCommand*)command;
+- (NSDictionary*)getMediaDictionaryFromPath:(NSString*)fullPath ofType:(NSString*)type;
+- (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info;
+- (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingImage:(UIImage*)image editingInfo:(NSDictionary*)editingInfo;
+- (void)imagePickerControllerDidCancel:(UIImagePickerController*)picker;
 
 @end
 
@@ -105,4 +123,3 @@ typedef NSUInteger CDVCaptureError;
 - (NSString*)formatTime:(int)interval;
 - (void)updateTime;
 @end
-
