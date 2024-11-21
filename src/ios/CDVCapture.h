@@ -50,6 +50,7 @@ typedef NSUInteger CDVCaptureError;
     CDVImagePicker* pickerController;
     BOOL inUse;
 }
+@property (nonatomic, strong) NSString *lastVideoPath; // Propriedade para armazenar o caminho do último vídeo capturado
 @property (nonatomic, strong) UIImagePickerController *picker;
 @property (nonatomic, assign) NSInteger recordingTime; // Tempo de gravação em segundos
 @property (nonatomic, strong) NSTimer *recordingTimer; // Timer para atualizar o relógio
@@ -64,6 +65,7 @@ typedef NSUInteger CDVCaptureError;
 - (CDVPluginResult*)processVideo:(NSString*)moviePath forCallbackId:(NSString*)callbackId;
 - (void)getMediaModes:(CDVInvokedUrlCommand*)command;
 - (void)getFormatData:(CDVInvokedUrlCommand*)command;
+- (void)repeatVideo:(UIButton *)sender;
 - (NSDictionary*)getMediaDictionaryFromPath:(NSString*)fullPath ofType:(NSString*)type;
 - (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingMediaWithInfo:(NSDictionary*)info;
 - (void)imagePickerController:(UIImagePickerController*)picker didFinishPickingImage:(UIImage*)image editingInfo:(NSDictionary*)editingInfo;

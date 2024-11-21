@@ -215,6 +215,7 @@
 
 - (void)captureVideo:(CDVInvokedUrlCommand*)command {
     self.callbackId = command.callbackId;
+
     NSLog(@"[INFO] Iniciando captura de vídeo.");
 
     UIImagePickerController* picker = [[UIImagePickerController alloc] init];
@@ -276,11 +277,13 @@
     [overlay addSubview:recordButton];
 
     // Botão de troca de câmera
-    UIButton *switchCameraButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    UIButton *switchCameraButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [switchCameraButton setFrame:CGRectMake(overlay.bounds.size.width - 60, 40, 40, 40)];
-    [switchCameraButton setBackgroundColor:[UIColor lightGrayColor]];
+    [switchCameraButton setTintColor:[UIColor whiteColor]]; // Cor do ícone
+    [switchCameraButton setImage:[UIImage systemImageNamed:@"arrow.triangle.2.circlepath.camera"] forState:UIControlStateNormal];
     [switchCameraButton addTarget:self action:@selector(switchCamera:) forControlEvents:UIControlEventTouchUpInside];
     [overlay addSubview:switchCameraButton];
+
 
     return overlay;
 }
@@ -625,61 +628,142 @@
         return;
     }
 
-    // Exibir preview com ações
+    // Atualizar o caminho do vídeo capturado
+    self.lastVideoPath = [videoURL path];
+
+    // Criar player para o preview
     AVPlayer *player = [AVPlayer playerWithURL:videoURL];
     AVPlayerViewController *playerVC = [[AVPlayerViewController alloc] init];
     playerVC.player = player;
+    playerVC.showsPlaybackControls = YES;
 
-    // Adicionar botões de ação
-    UIView *overlay = [[UIView alloc] initWithFrame:playerVC.view.bounds];
-    overlay.backgroundColor = [UIColor clearColor];
+    // Configurar player para iniciar em pausa
+    [player pause];
+
+    // Configurar layout personalizado para o player e os botões
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [picker dismissViewControllerAnimated:YES completion:^{
+            // Criar uma view container para gerenciar player e botões
+            UIView *previewContainer = [[UIView alloc] initWithFrame:self.viewController.view.bounds];
+            previewContainer.backgroundColor = [UIColor blackColor];
+            previewContainer.tag = 9999; // Tag para identificar o container
+
+            // Adicionar o player ao container
+            UIView *playerView = playerVC.view;
+            playerView.frame = CGRectMake(0, 30, previewContainer.bounds.size.width, previewContainer.bounds.size.height * 0.80);
+            [previewContainer addSubview:playerView];
+            [self.viewController addChildViewController:playerVC];
+            [playerVC didMoveToParentViewController:self.viewController];
+
+            // Adicionar botões abaixo do player
+            [self addPreviewButtonsToContainer:previewContainer];
+            [self.viewController.view addSubview:previewContainer];
+        }];
+    });
+}
+
+- (void)addPreviewButtonsToContainer:(UIView *)container {
+    CGFloat buttonHeight = 80;
+    CGFloat screenWidth = container.bounds.size.width;
+    CGFloat buttonContainerY = 30 + container.bounds.size.height * 0.80;
+
+    UIView *buttonContainer = [[UIView alloc] initWithFrame:CGRectMake(0, buttonContainerY, screenWidth, buttonHeight)];
+    buttonContainer.backgroundColor = [UIColor blackColor];
 
     // Botão Confirmar
     UIButton *confirmButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    confirmButton.frame = CGRectMake(overlay.center.x - 80, overlay.bounds.size.height - 80, 70, 40);
+    confirmButton.frame = CGRectMake((screenWidth / 2) - 175, 20, 100, 40);
     [confirmButton setTitle:@"Confirmar" forState:UIControlStateNormal];
     [confirmButton setBackgroundColor:[UIColor greenColor]];
     [confirmButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     confirmButton.layer.cornerRadius = 5;
     [confirmButton addTarget:self action:@selector(confirmVideo:) forControlEvents:UIControlEventTouchUpInside];
-    [overlay addSubview:confirmButton];
+    [buttonContainer addSubview:confirmButton];
 
     // Botão Repetir
     UIButton *repeatButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    repeatButton.frame = CGRectMake(overlay.center.x + 10, overlay.bounds.size.height - 80, 70, 40);
+    repeatButton.frame = CGRectMake((screenWidth / 2)-50, 20, 100, 40);
     [repeatButton setTitle:@"Repetir" forState:UIControlStateNormal];
-    [repeatButton setBackgroundColor:[UIColor redColor]];
+    [repeatButton setBackgroundColor:[UIColor grayColor]];
     [repeatButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     repeatButton.layer.cornerRadius = 5;
     [repeatButton addTarget:self action:@selector(repeatVideo:) forControlEvents:UIControlEventTouchUpInside];
-    [overlay addSubview:repeatButton];
+    [buttonContainer addSubview:repeatButton];
 
-    [playerVC.contentOverlayView addSubview:overlay];
+    // Botão Cancelar
+    UIButton *cancelButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    cancelButton.frame = CGRectMake((screenWidth / 2) + 75, 20, 100, 40);
+    [cancelButton setTitle:@"Cancelar" forState:UIControlStateNormal];
+    [cancelButton setBackgroundColor:[UIColor redColor]];
+    [cancelButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    cancelButton.layer.cornerRadius = 5;
+    [cancelButton addTarget:self action:@selector(cancelPreview:) forControlEvents:UIControlEventTouchUpInside];
+    [buttonContainer addSubview:cancelButton];
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [picker dismissViewControllerAnimated:YES completion:^{
-            NSLog(@"[INFO] Exibindo player para pré-visualização do vídeo.");
-            [self.viewController presentViewController:playerVC animated:YES completion:^{
-                [player play];
-            }];
-        }];
-    });
+    [container addSubview:buttonContainer];
 }
 
-// Métodos para as ações dos botões
-- (void)confirmVideo:(UIButton *)sender {
-    NSLog(@"[INFO] Vídeo confirmado.");
-    // Enviar o resultado para o Cordova
-    CDVPluginResult* result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"Vídeo confirmado"];
-    [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
-    [self.viewController dismissViewControllerAnimated:YES completion:nil];
+- (void)cancelPreview:(UIButton *)sender {
+    NSLog(@"[INFO] Preview cancelado pelo usuário.");
+
+    // Reutilizar o fluxo de cancelamento padrão
+    [self imagePickerControllerDidCancel:self.picker];
+    
+    // Remover o preview manualmente
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *previewContainer = [self.viewController.view.subviews lastObject];
+        if (previewContainer) {
+            [previewContainer removeFromSuperview];
+            NSLog(@"[INFO] Preview removido após cancelamento.");
+        } else {
+            NSLog(@"[WARNING] Container do preview não encontrado para remoção.");
+        }
+    });
 }
 
 - (void)repeatVideo:(UIButton *)sender {
     NSLog(@"[INFO] Repetindo gravação.");
-    [self.viewController dismissViewControllerAnimated:YES completion:^{
-        [self captureVideo:nil];
-    }];
+
+    // Fechar o preview atual
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *previewContainer = [self.viewController.view.subviews lastObject];
+        [previewContainer removeFromSuperview];
+
+        // Reiniciar a gravação
+        [self captureVideo:[self.commandDelegate getCommandInstance:self.callbackId]];
+    });
+}
+
+- (void)confirmVideo:(UIButton *)sender {
+    NSLog(@"[INFO] Vídeo confirmado.");
+
+    if (self.lastVideoPath) {
+        // Criar um objeto JSON com as informações do vídeo
+        NSDictionary *resultDict = @{
+            @"fullPath": self.lastVideoPath,
+            @"name": [self.lastVideoPath lastPathComponent],
+            @"type": @"video/quicktime" // Ajuste conforme o tipo real do vídeo
+        };
+
+        // Enviar o resultado para o Cordova
+        CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:resultDict];
+        [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+    } else {
+        // Retornar um erro caso o caminho do vídeo não esteja definido
+        CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Caminho do vídeo não encontrado."];
+        [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
+    }
+
+    // Remover todo o container do preview (incluindo player e fundo preto)
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *previewContainer = [self.viewController.view.subviews lastObject];
+        if (previewContainer) {
+            [previewContainer removeFromSuperview];
+            NSLog(@"[INFO] Preview e player removidos.");
+        } else {
+            NSLog(@"[WARNING] Container do preview não encontrado.");
+        }
+    });
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
