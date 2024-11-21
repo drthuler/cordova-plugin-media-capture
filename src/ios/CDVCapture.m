@@ -739,14 +739,17 @@
 
     if (self.lastVideoPath) {
         // Criar um objeto JSON com as informações do vídeo
-        NSDictionary *resultDict = @{
+        NSDictionary *mediaFile = @{
             @"fullPath": self.lastVideoPath,
             @"name": [self.lastVideoPath lastPathComponent],
             @"type": @"video/quicktime" // Ajuste conforme o tipo real do vídeo
         };
 
-        // Enviar o resultado para o Cordova
-        CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:resultDict];
+        // Envolver o objeto em um array
+        NSArray *mediaFiles = @[mediaFile];
+
+        // Enviar o array como resultado para o Cordova
+        CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:mediaFiles];
         [self.commandDelegate sendPluginResult:result callbackId:self.callbackId];
     } else {
         // Retornar um erro caso o caminho do vídeo não esteja definido
