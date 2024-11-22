@@ -23,7 +23,15 @@ description: Capture audio, video, and images.
 
 # cordova-plugin-media-capture
 
-[![Android Testsuite](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/android.yml/badge.svg)](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/android.yml) [![Chrome Testsuite](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/chrome.yml/badge.svg)](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/chrome.yml) [![iOS Testsuite](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/ios.yml/badge.svg)](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/ios.yml) [![Lint Test](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/lint.yml/badge.svg)](https://github.com/apache/cordova-plugin-media-capture/actions/workflows/lint.yml)
+--- Fork presentation ---
+
+This fork were made in order to fix iOS video capture preview freezes.
+It`s overrides original implementation of captureVideo() method, redrawing
+original UI overlay of UIImagePickerController to capture teh video and
+using AVCaptureSessions to preview video and trigger confirm/cancel/repeat 
+actions.
+
+--- Original presentation ---
 
 This plugin provides access to the device's audio, image, and video capture capabilities.
 
